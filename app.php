@@ -9,14 +9,35 @@ use Symfony\Component\HttpFoundation\Response;
 
 // Config
 $app['debug'] = true;
-$app['bbb.host'] = "";
-//$app['bbb.username'] = "bigbluebutton";
-$app['bbb.securitySalt'] = "";
+$app['config'] = parse_ini_file("config.ini", true);
 
 // BBB function
-require_once __DIR__.'/bbbClient.php';      // TODO : use autoloader
+// TODO : use autoloader
+require_once __DIR__.'/lib/BbbQuery.class.php';
+require_once __DIR__.'/lib/BbbServer.class.php';
+
 $app['bbb'] = function ($app) {
-    return new bbbClient($app['bbb.host'],$app['bbb.securitySalt']);
+    return new BbbServer($app['config']['server']['securitySalt'], $app['config']['server']['url']);
+};
+
+function getChecksum(BbbQuery $query, BbbServer $bbb) {
+    return sha1($query->getFunction() . (string) $query . $bbb->getSecuritySalt());
+};
+
+function query(BbbServer $server, BbbQuery $query) {
+    $queryStr = $query->getFunction()."?".(string) $query . "&checksum=".getChecksum($query, $server);
+    try {
+        $result =  @file_get_contents($server->getUrl().$queryStr);
+    } catch(Exception $e) { }
+    if(!$result) {
+        $result = '<response>
+        <returncode>FAILED</returncode>
+        <messageKey></messageKey>
+        <message></message>
+    </response>';
+    }
+
+    return $result;
 };
 
 $app->get('/', function() use($app) {
@@ -45,43 +66,24 @@ $app->get('/{username}/api/{function}', function (Request $request) use($app) {
 $app->get('/{username}/api/{function}', function(Request $request, $function, $username) use($app) {
     $response = new Response();
 
-    $req = explode('&',$request->getQueryString());
-    $params = array();
-    foreach($req as $key => $elem) {
-        $elem = explode("=",$elem);
-        if(count($elem) > 1)
-            $params[$elem[0]] = $elem[1];
-    }
-    //if(array_key_exists("checksum", $params))
+    $bbb = new BbbServer("57e120a999816bdb5938dc7e80f15aec");
+    $query = new BbbQuery($function, $request->server->get('QUERY_STRING'));
+    // can't use $request->getQueryString() because symfony normalise the queryString
 
-    // is query is valid
-    if($app['bbb']->isValidQuery($function, $params)) {
-        if(array_key_exists('checksum', $params)) {
-            unset($params['checksum']);
-        }
-        $response->setContent($app['bbb']->query($function,$params));
+    $checksum = getChecksum($query, $bbb);
+    
+    if($checksum == $query->getParameter("checksum")) {
+        $response->setContent(query($app['bbb'], $query));
     } else {
         $response->setContent('<response>
 <returncode>FAILED</returncode>
-<messageKey>Estheban - checksumError</messageKey>
+<messageKey>checksumError</messageKey>
 <message>You did not pass the checksum security check</message>
 </response>');
     }
 
-    // remove checksum from params
-    if(array_key_exists("checksum", $params)) {
-        unset($params['checksum']);
-    }
-    /*
-    foreach($request->attributes as $key=>$att) {
-        echo $key." = ".$att."\n";
-    }*/
-    
-    
-    //$response->setContent();
     $response->setStatusCode(200);
     $response->headers->set('Content-Type', 'text/xml');
-
     return $response;
 });
 
