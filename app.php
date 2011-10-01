@@ -66,14 +66,26 @@ $app->get('/{username}/api/{function}', function (Request $request) use($app) {
 $app->get('/{username}/api/{function}', function(Request $request, $function, $username) use($app) {
     $response = new Response();
 
-    $bbb = new BbbServer("57e120a999816bdb5938dc7e80f15aec");
+    $bbb = new BbbServer($app['config']['server']['securitySalt']);
     $query = new BbbQuery($function, $request->server->get('QUERY_STRING'));
     // can't use $request->getQueryString() because symfony normalise the queryString
 
     $checksum = getChecksum($query, $bbb);
-    
+
+    // Validate Query
     if($checksum == $query->getParameter("checksum")) {
-        $response->setContent(query($app['bbb'], $query));
+        // valid
+        switch($function) {
+            case "join":
+                // Quick fix, redirect to the original BigBlueButton API
+                $queryStr = $query->getFunction()."?".(string) $query . "&checksum=".getChecksum($query, $app['bbb']);
+                return $app->redirect($app['bbb']->getUrl().$queryStr);
+                break;
+            default:
+                $result = query($app['bbb'], $query);
+                break;
+        }
+        $response->setContent($result);
     } else {
         $response->setContent('<response>
 <returncode>FAILED</returncode>
